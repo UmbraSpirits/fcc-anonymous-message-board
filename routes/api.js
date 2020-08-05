@@ -54,20 +54,23 @@ module.exports = function (app) {
           }
           res.redirect(`/b/${board}/`);
         });
-
-        // newThread.save((err, data) => {
-        //   if (err) {
-        //     return console.log(err);
-        //   }
-
-        // });
       });
     })
     .get((req, res) => {
       const { board } = req.params;
       boardData.findOne({ board: board }).then((data) => {
-        console.log(data.thread);
-        const dataShowing = data.thread.sort((a, b) => b - a).slice(0, 10);
+        var dataShowing = data.thread;
+        dataShowing.map((e) => (e.replycount = e.replies.length));
+        dataShowing.map((e) => (e.delete_password = ""));
+        dataShowing.map((e) =>
+          e.replies.map((item) => (item.delete_password = ""))
+        );
+        dataShowing.map(
+          (e) => (e.replies = e.replies.filter((e) => e.reported !== true))
+        );
+        dataShowing = dataShowing.filter((e) => e.reported !== true);
+        dataShowing.sort((a, b) => b - a).slice(0, 10);
+        console.log(dataShowing);
         res.json(dataShowing);
       });
     })
@@ -75,18 +78,17 @@ module.exports = function (app) {
       const { board } = req.params;
       const { report_id } = req.body;
       // console.log(board, report_id);
-      boardData
-        .updateOne(
-          { board, "thread._id": ObjectId(report_id) },
-          {
-            $set: {
-              "thread.$.reported": true,
-            },
-          }
-        )
-        .then((data) => {
-          console.log(data);
-        });
+      boardData.updateOne(
+        { board, "thread._id": ObjectId(report_id) },
+        {
+          $set: {
+            "thread.$.reported": true,
+          },
+        }
+      );
+      // .then((data) => {
+      //   console.log(data);
+      // });
     })
     .delete((req, res) => {
       const { board } = req.params;
@@ -104,7 +106,8 @@ module.exports = function (app) {
           }
         )
         .then((data) => {
-          res.send(`${data.nModified} item has been deleted`);
+          var reply = data.nModified == 0 ? "incorrect password" : "succes";
+          res.send(reply);
         });
     });
   app
@@ -202,6 +205,10 @@ module.exports = function (app) {
             ],
           }
         )
-        .then(() => res.redirect(`/b/${board}/${thread_id}/`));
+        .then((data) => {
+          var reply = data.nModified == 0 ? "incorrect password" : "succes";
+          res.send(reply);
+          // res.redirect(`/b/${board}/${thread_id}/`);
+        });
     });
 };
