@@ -9,10 +9,12 @@
 "use strict";
 
 const { contentSecurityPolicy } = require("helmet");
+var ObjectId = require("mongodb").ObjectId;
 
 var expect = require("chai").expect;
 var threadData = require("../models/thread").threadData;
 var boardData = require("../models/board").boardData;
+var replyData = require("../models/reply").replyData;
 
 module.exports = function (app) {
   app
@@ -30,13 +32,11 @@ module.exports = function (app) {
         }
         if (data) {
           newBoard = data;
-          console.log("Used an existing board\n", newBoard);
         } else {
           newBoard = new boardData({
             board: board,
             thread: [],
           });
-          console.log("created a new board\n", newBoard);
         }
         var newThread = new threadData({
           text: text,
@@ -46,20 +46,21 @@ module.exports = function (app) {
           bumped_on: Date.now(),
           replies: [],
         });
-
         newBoard.thread.push(newThread);
 
-        newThread.save((err, data) => {
+        newBoard.save((err, data) => {
           if (err) {
             return console.log(err);
           }
-          newBoard.save((err, data) => {
-            if (err) {
-              return console.log(err);
-            }
-            res.redirect(`/b/${board}/`);
-          });
+          res.redirect(`/b/${board}/`);
         });
+
+        // newThread.save((err, data) => {
+        //   if (err) {
+        //     return console.log(err);
+        //   }
+
+        // });
       });
     })
     .get((req, res) => {
@@ -72,21 +73,135 @@ module.exports = function (app) {
     })
     .put((req, res) => {
       const { board } = req.params;
-      const { report_id } = req.query;
-      console.log(report_id);
-      boardData.findByIdAndUpdate(
-        report_id,
-        { $set: { reported: true } },
+      const { report_id } = req.body;
+      // console.log(board, report_id);
+      boardData
+        .updateOne(
+          { board, "thread._id": ObjectId(report_id) },
+          {
+            $set: {
+              "thread.$.reported": true,
+            },
+          }
+        )
+        .then((data) => {
+          console.log(data);
+        });
+    })
+    .delete((req, res) => {
+      const { board } = req.params;
+      const { delete_password, thread_id } = req.body;
+      boardData
+        .updateOne(
+          { board: board },
+          {
+            $pull: {
+              thread: {
+                _id: ObjectId(thread_id),
+                delete_password: delete_password,
+              },
+            },
+          }
+        )
+        .then((data) => {
+          res.send(`${data.nModified} item has been deleted`);
+        });
+    });
+  app
+    .route("/api/replies/:board")
+    .post((req, res) => {
+      const { board } = req.params;
+      const { thread_id, text, delete_password } = req.body;
+
+      var newReply = new replyData({
+        text: text,
+        delete_password: delete_password,
+        created_on: Date.now(),
+        bumped_on: Date.now(),
+        reported: false,
+      });
+
+      boardData
+        .findOneAndUpdate(
+          { board: board, "thread._id": ObjectId(thread_id) },
+          { $push: { "thread.$.replies": newReply } }
+        )
+        .then(() => res.redirect(`/b/${board}/${thread_id}/`));
+    })
+    .get((req, res) => {
+      const { board } = req.params;
+      const { thread_id } = req.query;
+
+      boardData.findOne(
+        { board: board, "thread._id": ObjectId(thread_id) },
         (err, data) => {
-          err ? console.log(err) : console.log("successfull flagged");
+          if (err) {
+            console.log(err);
+          } else {
+            var dataShown = data.thread[0];
+            dataShown.replies = dataShown.replies.filter(
+              (e) => e.reported !== true
+            );
+            dataShown.replies = dataShown.replies.slice(0, 3);
+            dataShown.delete_password = "";
+            dataShown.replies.map((e) => (e.delete_password = ""));
+
+            res.json(dataShown);
+          }
         }
       );
     })
-    .delete((req, res) => {});
-  app
-    .route("/api/replies/:board")
-    .post((req, res) => {})
-    .get((req, res) => {})
-    .put((req, res) => {})
-    .delete((req, res) => {});
+    .put((req, res) => {
+      const { board } = req.params;
+      const { reply_id, thread_id } = req.body;
+      console.log(board, reply_id, thread_id);
+      boardData
+        .updateOne(
+          {
+            board,
+          },
+          {
+            $set: {
+              "thread.$[thread].replies.$[replies].reported": true,
+              "thread.$[thread].replies.$[replies].bumped_on": new Date(),
+            },
+          },
+          {
+            arrayFilters: [
+              { "thread._id": ObjectId(thread_id) },
+              { "replies._id": ObjectId(reply_id) },
+            ],
+          }
+        )
+        .then((data) => {
+          console.log(data);
+        });
+    })
+    .delete((req, res) => {
+      const { board } = req.params;
+      const { delete_password, reply_id, thread_id } = req.body;
+      console.log(board, reply_id, thread_id);
+      boardData
+        .updateOne(
+          {
+            board,
+          },
+          {
+            $set: {
+              "thread.$[thread].replies.$[replies].text": "[deleted]",
+              "thread.$[thread].replies.$[replies].bumped_on": new Date(),
+            },
+          },
+          {
+            arrayFilters: [
+              { "thread._id": ObjectId(thread_id) },
+              {
+                "replies._id": ObjectId(reply_id),
+                "replies.delete_password": delete_password,
+              },
+            ],
+          }
+        )
+        .then(() => res.redirect(`/b/${board}/${thread_id}/`));
+    });
 };
